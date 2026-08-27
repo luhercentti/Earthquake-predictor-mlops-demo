@@ -2,10 +2,9 @@
 HuggingFace-aware predictor — used only in the Render deployment.
 Swapped in by the Dockerfile; the local serving/predictor.py is untouched.
 
-Differences from serving/predictor.py:
-  - ModelRegistry.load() downloads models from HF if not present locally.
-  - run_forecast() uses models/cell_snapshot.parquet (uploaded to HF)
-    instead of the 200 MB earthquake parquet that isn't in the container.
+Only difference from serving/predictor.py:
+  - ModelRegistry.load() downloads models + parquet from HF at startup
+    if they are not already present in the container.
 """
 
 from __future__ import annotations
@@ -27,10 +26,9 @@ from pipeline.features import FEATURE_COLS, get_latest_cell_features   # noqa: F
 
 log = logging.getLogger(__name__)
 
-HF_REPO_ID = os.getenv("HF_REPO_ID", "")
-MODEL_DIR   = PROJECT_ROOT / "models"
-# Cell snapshot is uploaded to HF alongside the model files
-CELL_SNAPSHOT = MODEL_DIR / "cell_snapshot.parquet"
+HF_REPO_ID   = os.getenv("HF_REPO_ID", "")
+MODEL_DIR    = PROJECT_ROOT / "models"
+DEFAULT_PARQUET = MODEL_DIR / "earthquakes_full.parquet"
 
 # ── Country / city reference data ────────────────────────────────────────────
 COUNTRY_BBOX: dict[str, tuple[float, float, float, float]] = {
@@ -124,7 +122,8 @@ class ModelRegistry:
         mag_path  = MODEL_DIR / "mag_model.lgbm"
         meta_path = MODEL_DIR / "metadata.json"
 
-        if not time_path.exists() or not mag_path.exists():
+        # Download everything from HF if either models or parquet are missing
+        if not time_path.exists() or not mag_path.exists() or not DEFAULT_PARQUET.exists():
             self._download_from_hf()
 
         log.info("Loading models from %s …", MODEL_DIR)
@@ -166,11 +165,14 @@ def _resolve_region(country, city, lat, lon, radius_km):
     raise ValueError("Provide country, city, or lat+lon.")
 
 
-def _nearest_place(lat: float, lon: float) -> str:
-    # No catalog available in the container — return coordinate string
-    lat_s = f"{abs(lat):.1f}°{'S' if lat < 0 else 'N'}"
-    lon_s = f"{abs(lon):.1f}°{'W' if lon < 0 else 'E'}"
-    return f"{lat_s}  {lon_s}"
+def _nearest_place(lat: float, lon: float, place_df=None) -> str:
+    if place_df is None or place_df.empty:
+        lat_s = f"{abs(lat):.1f}°{'S' if lat < 0 else 'N'}"
+        lon_s = f"{abs(lon):.1f}°{'W' if lon < 0 else 'E'}"
+        return f"{lat_s}  {lon_s}"
+    dists = (place_df["latitude"] - lat) ** 2 + (place_df["longitude"] - lon) ** 2
+    place = str(place_df.loc[dists.idxmin(), "place"])
+    return place if place and place != "nan" else f"{lat:.2f}, {lon:.2f}"
 
 
 def _build_summary(forecasts: list[dict], region: str, mae: float | None) -> str:
@@ -191,22 +193,27 @@ def _build_summary(forecasts: list[dict], region: str, mae: float | None) -> str
 def run_forecast(
     country=None, city=None, lat=None, lon=None,
     radius_km=200.0, min_mag=None, top_n=10,
-    parquet_path=None,   # ignored in this HF version
+    parquet_path=None,
 ) -> dict:
     registry = ModelRegistry.get()
     if not registry.loaded:
         registry.load()
 
+    parquet_path = parquet_path or DEFAULT_PARQUET
     region_name, lat_range, lon_range = _resolve_region(country, city, lat, lon, radius_km)
 
-    if not CELL_SNAPSHOT.exists():
-        raise FileNotFoundError(
-            f"Cell snapshot not found at {CELL_SNAPSHOT}. "
-            "Re-upload models with RENDER/upload_to_hf.py (it includes the snapshot)."
-        )
+    log.info("Computing cell features for region '%s' …", region_name)
+    cell_df = get_latest_cell_features(parquet_path)
 
-    log.info("Loading cell snapshot for region '%s' …", region_name)
-    cell_df = pd.read_parquet(CELL_SNAPSHOT)
+    if cell_df.empty:
+        return {
+            "region": region_name,
+            "as_of_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "total_active_cells": 0,
+            "summary": f"No active seismic cells found in {region_name}.",
+            "forecasts": [],
+            "model_test_mae_days": None,
+        }
 
     region_cells = cell_df[
         cell_df["lat_bin"].between(*lat_range) &
@@ -216,17 +223,15 @@ def run_forecast(
     if min_mag is not None:
         region_cells = region_cells[region_cells["max_mag_365d"] >= min_mag]
 
-    empty_result = {
-        "region": region_name,
-        "as_of_utc": pd.Timestamp.now(tz="UTC").isoformat(),
-        "total_active_cells": 0,
-        "summary": f"No active seismic cells found in {region_name}.",
-        "forecasts": [],
-        "model_test_mae_days": None,
-    }
-
     if region_cells.empty:
-        return empty_result
+        return {
+            "region": region_name,
+            "as_of_utc": pd.Timestamp.now(tz="UTC").isoformat(),
+            "total_active_cells": 0,
+            "summary": f"No active seismic cells found in {region_name}.",
+            "forecasts": [],
+            "model_test_mae_days": None,
+        }
 
     X = region_cells[FEATURE_COLS].values
     region_cells = region_cells.copy()
@@ -234,6 +239,15 @@ def run_forecast(
     region_cells["est_mag"]  = np.clip(registry.mag_model.predict(X), 1.0, 9.9)
 
     top = region_cells.sort_values("est_days").head(top_n)
+
+    # place name lookup from the full parquet
+    place_df = None
+    try:
+        ref = pd.read_parquet(parquet_path, columns=["latitude", "longitude", "place"])
+        ref = ref.dropna(subset=["place"])
+        place_df = ref.sample(min(50_000, len(ref)), random_state=42)
+    except Exception:
+        pass
 
     forecasts = []
     for rank, (_, row) in enumerate(top.iterrows(), 1):
@@ -246,7 +260,7 @@ def run_forecast(
             "estimated_magnitude": mw,
             "events_last_365d": int(row.get("count_365d", 0)),
             "max_magnitude_last_365d": round(float(row.get("max_mag_365d", 0)), 2),
-            "nearest_known_place": _nearest_place(row["lat_bin"] + 1.0, row["lon_bin"] + 1.0),
+            "nearest_known_place": _nearest_place(row["lat_bin"] + 1.0, row["lon_bin"] + 1.0, place_df),
         })
 
     mae = registry.metadata.get("test_metrics", {}).get("days_to_next", {}).get("mae")
@@ -259,7 +273,3 @@ def run_forecast(
         "forecasts": forecasts,
         "model_test_mae_days": round(mae, 3) if mae else None,
     }
-
-
-# health check helper
-DEFAULT_PARQUET = CELL_SNAPSHOT   # used by app.py health endpoint check
