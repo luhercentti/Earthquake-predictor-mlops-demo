@@ -258,12 +258,13 @@ def run_forecast(
 
     forecasts = []
     for rank, (_, row) in enumerate(top.iterrows(), 1):
+        mw  = round(float(row["est_mag"]), 2)
         forecasts.append({
             "rank": rank,
             "cell_lat": float(row["lat_bin"]),
             "cell_lon": float(row["lon_bin"]),
             "estimated_days_to_next": round(float(row["est_days"]), 2),
-            "estimated_magnitude": round(float(row["est_mag"]), 2),
+            "estimated_magnitude": mw,
             "events_last_365d": int(row.get("count_365d", 0)),
             "max_magnitude_last_365d": round(float(row.get("max_mag_365d", 0)), 2),
             "nearest_known_place": _nearest_place(

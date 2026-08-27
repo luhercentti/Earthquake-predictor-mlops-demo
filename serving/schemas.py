@@ -36,7 +36,7 @@ class CellForecast(BaseModel):
     cell_lat: float = Field(description="SW corner latitude of the 2°×2° grid cell")
     cell_lon: float = Field(description="SW corner longitude of the 2°×2° grid cell")
     estimated_days_to_next: float = Field(description="Expected days until next earthquake in this cell")
-    estimated_magnitude: float = Field(description="Expected magnitude of next earthquake")
+    estimated_magnitude: float = Field(description="Expected magnitude — Moment Magnitude (Mw). Equivalent to Richter (ML) for M3–6.")
     events_last_365d: int = Field(description="Number of earthquakes recorded in this cell in the past year")
     max_magnitude_last_365d: float = Field(description="Largest earthquake in this cell in the past year")
     nearest_known_place: str
