@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: earthquake-forecast
+    runtime: docker
+    dockerfilePath: ./RENDER/Dockerfile   # path relative to repo root
+    dockerContext: .                       # build context = repo root
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: HF_REPO_ID
+        sync: false   # fill this in the Render dashboard with your HF repo ID
+      - key: HF_TOKEN
+        sync: false   # only needed if your HF repo is private

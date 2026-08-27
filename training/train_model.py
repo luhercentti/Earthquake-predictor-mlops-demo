@@ -84,36 +84,40 @@ MODEL_DIR = PROJECT_ROOT / "models"
 # Tuned for inter-event time and magnitude regression on seismic catalogs.
 # Use train_model.py --tune to run a quick Optuna search (requires optuna pkg).
 LGBM_PARAMS_TIME = {
-    "objective": "regression_l1",   # MAE loss — robust to heavy-tailed inter-event times
-    "metric": "mae",
-    "n_estimators": 1500,
-    "learning_rate": 0.03,
-    "num_leaves": 127,
-    "max_depth": -1,
-    "min_child_samples": 50,
-    "feature_fraction": 0.8,
+    # tweedie suits positive heavy-tailed inter-event times better than MAE/MSE
+    "objective": "tweedie",
+    "tweedie_variance_power": 1.5,   # 1=Poisson, 2=Gamma; 1.5 fits inter-event empirically
+    "metric": "tweedie",
+    "n_estimators": 3000,
+    "learning_rate": 0.02,
+    "num_leaves": 255,
+    "max_depth": 8,
+    "min_child_samples": 30,
+    "feature_fraction": 0.7,
     "bagging_fraction": 0.8,
     "bagging_freq": 5,
-    "reg_alpha": 0.1,
-    "reg_lambda": 0.1,
+    "reg_alpha": 0.2,
+    "reg_lambda": 0.2,
     "n_jobs": -1,
     "random_state": 42,
     "verbose": -1,
 }
 
 LGBM_PARAMS_MAG = {
-    "objective": "regression_l2",   # MSE loss — magnitude distribution is less skewed
-    "metric": "rmse",
-    "n_estimators": 1200,
-    "learning_rate": 0.03,
-    "num_leaves": 127,
-    "max_depth": -1,
-    "min_child_samples": 50,
-    "feature_fraction": 0.8,
+    # huber is robust to rare extreme magnitudes that inflate MSE
+    "objective": "huber",
+    "alpha": 0.9,
+    "metric": "huber",
+    "n_estimators": 2500,
+    "learning_rate": 0.02,
+    "num_leaves": 255,
+    "max_depth": 8,
+    "min_child_samples": 30,
+    "feature_fraction": 0.7,
     "bagging_fraction": 0.8,
     "bagging_freq": 5,
-    "reg_alpha": 0.05,
-    "reg_lambda": 0.1,
+    "reg_alpha": 0.1,
+    "reg_lambda": 0.2,
     "n_jobs": -1,
     "random_state": 42,
     "verbose": -1,
