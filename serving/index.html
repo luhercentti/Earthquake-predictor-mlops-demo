@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Earthquake Forecast</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    .container { max-width: 820px; margin: 0 auto; }
+
+    header { text-align: center; margin-bottom: 2.5rem; }
+    header h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }
+    header h1 span { color: #f97316; }
+    header p { color: #94a3b8; margin-top: 0.5rem; font-size: 0.9rem; }
+
+    .search-card {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 0.35rem; }
+    .field label { font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    select, input[type="text"], input[type="number"] {
+      background: #0f1117;
+      border: 1px solid #2d3148;
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: 0.6rem 0.85rem;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.15s;
+      height: 2.6rem;
+    }
+    select:focus, input:focus { border-color: #f97316; }
+    select { cursor: pointer; }
+
+    #queryValue { width: 220px; }
+    #minMag     { width: 120px; }
+    #topN       { width: 90px; }
+
+    button {
+      background: #f97316;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 0 1.4rem;
+      height: 2.6rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    button:hover  { background: #ea6c0a; }
+    button:active { background: #d4600a; }
+    button:disabled { background: #4a3020; color: #a0735a; cursor: not-allowed; }
+
+    /* summary banner */
+    #summary-box {
+      display: none;
+      background: linear-gradient(135deg, #1a2a1a, #1e2a10);
+      border: 1px solid #3a5a20;
+      border-left: 4px solid #84cc16;
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    #summary-box .label { font-size: 0.72rem; color: #84cc16; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.4rem; }
+    #summary-box .text  { font-size: 1.1rem; line-height: 1.5; font-weight: 500; }
+    #summary-box .meta  { font-size: 0.8rem; color: #94a3b8; margin-top: 0.5rem; }
+
+    /* results table */
+    #results-box { display: none; }
+    #results-box h2 { font-size: 0.85rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.75rem; }
+
+    .results-table { width: 100%; border-collapse: collapse; }
+    .results-table th {
+      text-align: left;
+      font-size: 0.72rem;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid #2d3148;
+    }
+    .results-table td {
+      padding: 0.7rem 0.75rem;
+      font-size: 0.9rem;
+      border-bottom: 1px solid #1e2130;
+      vertical-align: middle;
+    }
+    .results-table tr:last-child td { border-bottom: none; }
+    .results-table tr:hover td { background: #1e2130; }
+
+    .rank-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.6rem;
+      height: 1.6rem;
+      border-radius: 50%;
+      font-size: 0.75rem;
+      font-weight: 700;
+      background: #2d3148;
+      color: #94a3b8;
+    }
+    .rank-badge.top { background: #431407; color: #f97316; }
+
+    .days-pill {
+      display: inline-block;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .days-urgent  { background: #431407; color: #fb923c; }
+    .days-soon    { background: #3b2e07; color: #fbbf24; }
+    .days-later   { background: #0f2a1e; color: #34d399; }
+
+    .mag-value { font-weight: 600; }
+    .mag-high   { color: #f87171; }
+    .mag-mid    { color: #fbbf24; }
+    .mag-low    { color: #94a3b8; }
+
+    /* disclaimer */
+    .disclaimer {
+      margin-top: 1.5rem;
+      font-size: 0.75rem;
+      color: #475569;
+      line-height: 1.5;
+      border-top: 1px solid #1e2130;
+      padding-top: 1rem;
+    }
+
+    /* error / loading */
+    #status-box {
+      display: none;
+      text-align: center;
+      padding: 2rem;
+      color: #94a3b8;
+      font-size: 0.9rem;
+    }
+    #status-box.error { color: #f87171; }
+
+    .spinner {
+      width: 1.5rem; height: 1.5rem;
+      border: 2px solid #2d3148;
+      border-top-color: #f97316;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: inline-block;
+      margin-bottom: 0.5rem;
+      vertical-align: middle;
+      margin-right: 0.5rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>🌍 Earthquake <span>Forecast</span></h1>
+    <p>Probabilistic estimates based on USGS + IGP Peru seismic catalog (1973–present)</p>
+  </header>
+
+  <div class="search-card">
+    <div class="search-row">
+      <div class="field">
+        <label>Query by</label>
+        <select id="queryType" onchange="onTypeChange()">
+          <option value="country">Country</option>
+          <option value="city">City</option>
+        </select>
+      </div>
+      <div class="field">
+        <label id="queryLabel">Country name</label>
+        <input id="queryValue" type="text" placeholder="e.g. Peru, Chile, Japan"
+               onkeydown="if(event.key==='Enter') getForecast()" />
+      </div>
+      <div class="field">
+        <label>Min magnitude</label>
+        <input id="minMag" type="number" placeholder="e.g. 4.5" step="0.5" min="1" max="9" />
+      </div>
+      <div class="field">
+        <label>Top N cells</label>
+        <input id="topN" type="number" value="10" min="1" max="50" />
+      </div>
+      <button id="btn" onclick="getForecast()">Get Forecast</button>
+    </div>
+  </div>
+
+  <div id="status-box"></div>
+
+  <div id="summary-box">
+    <div class="label">📍 Answer</div>
+    <div class="text" id="summary-text"></div>
+    <div class="meta" id="summary-meta"></div>
+  </div>
+
+  <div id="results-box">
+    <h2>Top active cells — ranked by expected time to next event</h2>
+    <table class="results-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Nearest place</th>
+          <th>Est. days</th>
+          <th>Est. magnitude</th>
+          <th>Events (1 yr)</th>
+          <th>Max mag (1 yr)</th>
+        </tr>
+      </thead>
+      <tbody id="results-tbody"></tbody>
+    </table>
+    <p class="disclaimer" id="disclaimer-text"></p>
+  </div>
+
+</div>
+
+<script>
+  function onTypeChange() {
+    const type = document.getElementById('queryType').value;
+    document.getElementById('queryLabel').textContent =
+      type === 'country' ? 'Country name' : 'City name';
+    document.getElementById('queryValue').placeholder =
+      type === 'country' ? 'e.g. Peru, Chile, Japan' : 'e.g. Lima, Tokyo, Santiago';
+  }
+
+  function daysPillClass(d) {
+    if (d <= 7)  return 'days-urgent';
+    if (d <= 30) return 'days-soon';
+    return 'days-later';
+  }
+
+  function magClass(m) {
+    if (m >= 6.0) return 'mag-high';
+    if (m >= 4.5) return 'mag-mid';
+    return 'mag-low';
+  }
+
+  function setStatus(msg, isError = false) {
+    const box = document.getElementById('status-box');
+    box.style.display = 'block';
+    box.className = isError ? 'error' : '';
+    box.innerHTML = isError ? `⚠ ${msg}` : `<span class="spinner"></span>${msg}`;
+  }
+
+  function clearStatus() {
+    document.getElementById('status-box').style.display = 'none';
+  }
+
+  async function getForecast() {
+    const type  = document.getElementById('queryType').value;
+    const value = document.getElementById('queryValue').value.trim();
+    const minMag = document.getElementById('minMag').value;
+    const topN   = document.getElementById('topN').value;
+
+    if (!value) {
+      setStatus('Please enter a ' + type + ' name.', true);
+      return;
+    }
+
+    // hide old results
+    document.getElementById('summary-box').style.display = 'none';
+    document.getElementById('results-box').style.display = 'none';
+    const btn = document.getElementById('btn');
+    btn.disabled = true;
+    setStatus('Computing forecast…');
+
+    const body = { top_n: parseInt(topN) || 10 };
+    body[type] = value;
+    if (minMag) body.min_mag = parseFloat(minMag);
+
+    try {
+      const resp = await fetch('/forecast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.detail || `HTTP ${resp.status}`);
+      }
+
+      const data = await resp.json();
+      clearStatus();
+      renderResults(data);
+    } catch (e) {
+      setStatus(e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderResults(data) {
+    // summary banner
+    document.getElementById('summary-text').textContent = data.summary;
+    document.getElementById('summary-meta').textContent =
+      `${data.total_active_cells} active cells found · as of ${new Date(data.as_of_utc).toUTCString()}`;
+    document.getElementById('summary-box').style.display = 'block';
+
+    // table
+    const tbody = document.getElementById('results-tbody');
+    tbody.innerHTML = '';
+    data.forecasts.forEach(f => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><span class="rank-badge ${f.rank <= 3 ? 'top' : ''}">${f.rank}</span></td>
+        <td>${f.nearest_known_place}</td>
+        <td><span class="days-pill ${daysPillClass(f.estimated_days_to_next)}">~${f.estimated_days_to_next.toFixed(1)}d</span></td>
+        <td><span class="mag-value ${magClass(f.estimated_magnitude)}">M ${f.estimated_magnitude.toFixed(1)}</span></td>
+        <td>${f.events_last_365d}</td>
+        <td><span class="${magClass(f.max_magnitude_last_365d)}">M ${f.max_magnitude_last_365d.toFixed(1)}</span></td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    document.getElementById('disclaimer-text').textContent = data.disclaimer;
+    document.getElementById('results-box').style.display = 'block';
+  }
+</script>
+</body>
+</html>
