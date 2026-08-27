@@ -3,7 +3,7 @@
 End-to-end MLOps project that downloads the global earthquake catalog,
 trains a LightGBM model, and serves probabilistic forecasts via a REST API.
 
-Currently live in render url: (each run will take around 5 minutes to respond:) - free computing type limitation thing
+Currently live in render url: (each run will take around 14 minutes to respond:) - free computing type limitation thing
 https://earthquake-forecast.onrender.com/
 
 ---
