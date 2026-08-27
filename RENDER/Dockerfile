@@ -3,6 +3,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# libgomp1 is required by LightGBM at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first (layer cached unless requirements change)
 COPY RENDER/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
