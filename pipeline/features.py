@@ -37,17 +37,22 @@ MAX_DAYS_LABEL = 365
 MIN_CELL_EVENTS = 5
 
 FEATURE_COLS = [
-    # rolling window stats (past 7/30/90/365 days in same cell)
+    # short-term rolling windows (past 7/30/90/365 days)
     "count_7d",   "mean_mag_7d",   "max_mag_7d",   "min_mag_7d",   "std_mag_7d",   "mean_depth_7d",   "seismic_moment_7d",
     "count_30d",  "mean_mag_30d",  "max_mag_30d",  "min_mag_30d",  "std_mag_30d",  "mean_depth_30d",  "seismic_moment_30d",
     "count_90d",  "mean_mag_90d",  "max_mag_90d",  "min_mag_90d",  "std_mag_90d",  "mean_depth_90d",  "seismic_moment_90d",
     "count_365d", "mean_mag_365d", "max_mag_365d", "min_mag_365d", "std_mag_365d", "mean_depth_365d", "seismic_moment_365d",
-    # Gutenberg-Richter b-value: slope of log(N)~M — low b = higher large-quake risk
-    "b_value_365d",
+    # long-term rolling windows (3 yr and 5 yr) — captures slow fault cycles
+    "count_3yr",  "mean_mag_3yr",  "max_mag_3yr",  "seismic_moment_3yr",
+    "count_5yr",  "mean_mag_5yr",  "max_mag_5yr",  "seismic_moment_5yr",
+    # Gutenberg-Richter b-value computed on 5 yr window (more reliable than 1 yr)
+    "b_value_5yr",
+    # long-term average inter-event time for this cell (historical baseline)
+    "historical_rate",
     # inter-event time sequence features
     "days_since_last",
-    "inter_event_mean_10",   # mean of last 10 inter-event times (cell rate)
-    "inter_event_cv_10",     # coefficient of variation — high = aftershock clustering
+    "inter_event_mean_10",
+    "inter_event_cv_10",
     # current event
     "magnitude", "depth", "mag_last",
     # spatial & temporal context
@@ -72,12 +77,11 @@ def _cell_features(g: pd.DataFrame) -> pd.DataFrame:
     g = g.sort_values("time").copy()
     g = g.set_index("time")
 
-    # pre-compute seismic moment per event (used in rolling sum)
     g["_sm"] = 10.0 ** (1.5 * g["magnitude"])
 
     for window, label in [("7D", "7d"), ("30D", "30d"),
-                          ("90D", "90d"), ("365D", "365d")]:
-        # closed='left' → [t-w, t): past events only, excludes current
+                          ("90D", "90d"), ("365D", "365d"),
+                          ("1095D", "3yr"), ("1825D", "5yr")]:
         kwargs = dict(window=window, min_periods=0, closed="left")
         mag_r = g["magnitude"].rolling(**kwargs)
         dep_r = g["depth"].rolling(**kwargs)
@@ -89,20 +93,26 @@ def _cell_features(g: pd.DataFrame) -> pd.DataFrame:
         g[f"min_mag_{label}"]        = mag_r.min().fillna(0)
         g[f"std_mag_{label}"]        = mag_r.std().fillna(0)
         g[f"mean_depth_{label}"]     = dep_r.mean().fillna(0)
-        # seismic moment sum captures energy release better than raw count
         g[f"seismic_moment_{label}"] = sm_r.sum().fillna(0)
 
-    # Gutenberg-Richter b-value (MLE): b = log10(e) / (mean_M - min_M + 0.05)
-    # Valid when ≥5 events; default 1.0 otherwise (global average)
-    b_denom = (g["mean_mag_365d"] - g["min_mag_365d"] + 0.05).clip(lower=0.01)
-    g["b_value_365d"] = np.where(
-        g["count_365d"] >= 5,
+    # b-value over 5-year window — more statistically stable than 1-year
+    b_denom = (g["mean_mag_5yr"] - g["min_mag_5yr"] + 0.05).clip(lower=0.01)
+    g["b_value_5yr"] = np.where(
+        g["count_5yr"] >= 10,
         np.log10(np.e) / b_denom,
         1.0,
     )
 
-    # inter-event times (position-based rolling on last 10 events)
+    # historical average inter-event time: total time span / number of events
+    # gives the cell's long-run baseline rate regardless of recent quiet periods
     idx_series = g.index.to_series()
+    n_events = len(g)
+    if n_events >= 2:
+        total_days = (g.index[-1] - g.index[0]).total_seconds() / 86400
+        g["historical_rate"] = total_days / n_events
+    else:
+        g["historical_rate"] = 999.0
+
     iet = idx_series.diff().dt.total_seconds().div(86400)
     g["days_since_last"] = iet.fillna(999.0)
 
@@ -112,9 +122,9 @@ def _cell_features(g: pd.DataFrame) -> pd.DataFrame:
     g["inter_event_mean_10"] = iet_mean
     g["inter_event_cv_10"]   = (iet_std / iet_mean.clip(lower=0.01)).fillna(0.0)
 
-    g["mag_last"]    = g["magnitude"].shift(1).fillna(0.0)
+    g["mag_last"]     = g["magnitude"].shift(1).fillna(0.0)
     g["days_to_next"] = -idx_series.diff(-1).dt.total_seconds().div(86400)
-    g["mag_next"]    = g["magnitude"].shift(-1)
+    g["mag_next"]     = g["magnitude"].shift(-1)
 
     return g.drop(columns=["_sm"]).reset_index()
 
@@ -183,8 +193,8 @@ def get_latest_cell_features(parquet_path: Path,
     if df["time"].dt.tz is None:
         df["time"] = df["time"].dt.tz_localize("UTC")
 
-    # Only look at the window of history needed for features
-    lookback_start = as_of - pd.Timedelta(days=366)
+    # Extend lookback to 10 years so 3yr/5yr rolling windows are fully populated
+    lookback_start = as_of - pd.Timedelta(days=3650)
     df = df[(df["time"] >= lookback_start) & (df["time"] <= as_of)].copy()
     df = df[df["magnitude"].notna() & df["depth"].notna()].copy()
     df = _assign_grid(df)

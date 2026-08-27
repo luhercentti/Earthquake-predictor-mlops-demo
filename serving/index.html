@@ -181,8 +181,21 @@
 
   <header>
     <h1>🌍 Earthquake <span>Forecast</span></h1>
-    <p>Probabilistic estimates based on USGS + IGP Peru seismic catalog (1973–present)</p>
+    <p>Probabilistic forecasting based on USGS + IGP Peru seismic catalog (1973–present)</p>
   </header>
+
+  <!-- How it works panel -->
+  <div style="background:#1e2130;border:1px solid #2d3148;border-radius:12px;padding:1.25rem 1.5rem;margin-bottom:1.5rem;font-size:0.85rem;color:#94a3b8;line-height:1.6;">
+    <div style="font-size:0.72rem;color:#f97316;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:0.6rem;">How this works</div>
+    <p style="margin-bottom:0.5rem;">This tool uses a LightGBM model trained on ~1 million historical earthquakes to estimate <strong style="color:#e2e8f0;">which zones are most likely to experience the next earthquake</strong>, and how strong it might be. It does <strong style="color:#f87171;">not</strong> predict exact dates — that is physically impossible with current science.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem 1.5rem;margin-top:0.75rem;">
+      <div><span style="color:#e2e8f0;font-weight:600;">Country / City</span> — the region to forecast. Any country, city, or US state.</div>
+      <div><span style="color:#e2e8f0;font-weight:600;">Search radius</span> — how far around a city centre to search (cities only). Default 200 km.</div>
+      <div><span style="color:#e2e8f0;font-weight:600;">Only zones with recent M≥X</span> — hides quiet zones. Useful for large countries with hundreds of active cells. Leave blank to show all zones.</div>
+      <div><span style="color:#e2e8f0;font-weight:600;">Results to show</span> — number of top-ranked zones returned. Top 1 = the single most likely next location.</div>
+    </div>
+    <div style="margin-top:0.75rem;color:#64748b;font-size:0.78rem;">⚠ The model only contains events M≥2.5. Setting "Only zones with recent M≥X" below 2.5 will return no results.</div>
+  </div>
 
   <div class="search-card">
     <div class="search-row">
@@ -195,15 +208,19 @@
       </div>
       <div class="field">
         <label id="queryLabel">Country name</label>
-        <input id="queryValue" type="text" placeholder="e.g. Peru, Chile, Japan"
+        <input id="queryValue" type="text" placeholder="e.g. Peru, Chile, Japan, Utah"
                onkeydown="if(event.key==='Enter') getForecast()" />
       </div>
-      <div class="field">
-        <label>Min magnitude</label>
-        <input id="minMag" type="number" placeholder="e.g. 4.5" step="0.5" min="1" max="9" />
+      <div class="field" id="radiusField" style="display:none">
+        <label>Search radius (km)</label>
+        <input id="radius" type="number" placeholder="200" value="200" min="50" max="2000" step="50" />
       </div>
       <div class="field">
-        <label>Top N cells</label>
+        <label>Only zones with recent M≥</label>
+        <input id="minMag" type="number" placeholder="any (≥2.5)" step="0.5" min="2.5" max="9" />
+      </div>
+      <div class="field">
+        <label>Results to show</label>
         <input id="topN" type="number" value="10" min="1" max="50" />
       </div>
       <button id="btn" onclick="getForecast()">Get Forecast</button>
@@ -219,16 +236,16 @@
   </div>
 
   <div id="results-box">
-    <h2>Top active cells — ranked by expected time to next event</h2>
+    <h2>Top zones — ranked by expected time to next earthquake</h2>
     <table class="results-table">
       <thead>
         <tr>
           <th>#</th>
           <th>Nearest place</th>
-          <th>Est. days</th>
-          <th>Est. magnitude (Mw ≈ Richter)</th>
-          <th>Events (1 yr)</th>
-          <th>Max mag (1 yr)</th>
+          <th>Forecast: days to next event</th>
+          <th>Forecast: magnitude (Mw)</th>
+          <th>Earthquakes recorded last 12 months</th>
+          <th>Largest in last 12 months</th>
         </tr>
       </thead>
       <tbody id="results-tbody"></tbody>
@@ -242,9 +259,11 @@
   function onTypeChange() {
     const type = document.getElementById('queryType').value;
     document.getElementById('queryLabel').textContent =
-      type === 'country' ? 'Country name' : 'City name';
+      type === 'country' ? 'Country or state name' : 'City name';
     document.getElementById('queryValue').placeholder =
-      type === 'country' ? 'e.g. Peru, Chile, Japan' : 'e.g. Lima, Tokyo, Santiago';
+      type === 'country' ? 'e.g. Peru, Chile, Japan, Utah' : 'e.g. Lima, Tokyo, Santiago';
+    document.getElementById('radiusField').style.display =
+      type === 'city' ? 'flex' : 'none';
   }
 
   function daysPillClass(d) {
@@ -271,13 +290,19 @@
   }
 
   async function getForecast() {
-    const type  = document.getElementById('queryType').value;
-    const value = document.getElementById('queryValue').value.trim();
+    const type   = document.getElementById('queryType').value;
+    const value  = document.getElementById('queryValue').value.trim();
     const minMag = document.getElementById('minMag').value;
     const topN   = document.getElementById('topN').value;
+    const radius = document.getElementById('radius').value;
 
     if (!value) {
-      setStatus('Please enter a ' + type + ' name.', true);
+      setStatus('Please enter a ' + (type === 'country' ? 'country or state' : 'city') + ' name.', true);
+      return;
+    }
+
+    if (minMag && parseFloat(minMag) < 2.5) {
+      setStatus('The dataset only contains M≥2.5 events. Set "Only zones with recent M≥" to 2.5 or higher, or leave it blank.', true);
       return;
     }
 
@@ -291,6 +316,7 @@
     const body = { top_n: parseInt(topN) || 10 };
     body[type] = value;
     if (minMag) body.min_mag = parseFloat(minMag);
+    if (type === 'city' && radius) body.radius_km = parseFloat(radius);
 
     try {
       const resp = await fetch('/forecast', {
